@@ -1,0 +1,312 @@
+{
+  "test1.jpg": [
+    {
+      "label": "yellow_cylinder",
+      "color": "yellow",
+      "shape": "cylinder",
+      "size_class": "",
+      "center_px": [
+        913.4,
+        782.9
+      ],
+      "table_xy_mm": null,
+      "angle_img_deg": -49.0,
+      "yaw_deg": null,
+      "notch_dir_deg": null,
+      "size_px": [
+        167.1,
+        153.3
+      ],
+      "size_mm": null,
+      "area_px": 20111,
+      "features": {
+        "area": 20111.0,
+        "peri": 548.4996,
+        "cx": 913.3645,
+        "cy": 782.944,
+        "length": 167.1287,
+        "width": 153.3162,
+        "aspect": 1.0901,
+        "extent": 0.7849,
+        "circularity": 0.84,
+        "solidity": 0.9808,
+        "hull_extent": 0.8002,
+        "hull_aspect": 1.0901,
+        "hull_circ": 0.986,
+        "hull_verts_fine": 12,
+        "hull_verts": 8,
+        "max_turn": 58.2784,
+        "edge_conv": 1.186,
+        "split_min": 0.1016,
+        "split_contrast": 80.3266,
+        "defect_depth": 3.2148,
+        "defect_ratio": 0.021,
+        "angle": -48.9909
+      }
+    },
+    {
+      "label": "pink_cuboid_long",
+      "color": "pink",
+      "shape": "cuboid_long",
+      "size_class": "",
+      "center_px": [
+        692.1,
+        306.6
+      ],
+      "table_xy_mm": null,
+      "angle_img_deg": -46.4,
+      "yaw_deg": null,
+      "notch_dir_deg": null,
+      "size_px": [
+        199.0,
+        107.0
+      ],
+      "size_mm": null,
+      "area_px": 19706,
+      "features": {
+        "area": 19706.5,
+        "peri": 608.2468,
+        "cx": 692.1326,
+        "cy": 306.5642,
+        "length": 199.0,
+        "width": 107.0,
+        "aspect": 1.8598,
+        "extent": 0.9255,
+        "circularity": 0.6694,
+        "solidity": 0.9682,
+        "hull_extent": 0.9559,
+        "hull_aspect": 1.8598,
+        "hull_circ": 0.7741,
+        "hull_verts_fine": 6,
+        "hull_verts": 5,
+        "max_turn": 92.9237,
+        "edge_conv": 1.213,
+        "split_min": 0.1187,
+        "split_contrast": 83.3275,
+        "defect_depth": 6.3633,
+        "defect_ratio": 0.0595,
+        "angle": -46.3972
+      }
+    },
+    {
+      "label": "green_cuboid_long",
+      "color": "green",
+      "shape": "cuboid_long",
+      "size_class": "",
+      "center_px": [
+        658.2,
+        709.1
+      ],
+      "table_xy_mm": null,
+      "angle_img_deg": -1.6,
+      "yaw_deg": null,
+      "notch_dir_deg": null,
+      "size_px": [
+        155.9,
+        90.9
+      ],
+      "size_mm": null,
+      "area_px": 13455,
+      "features": {
+        "area": 13455.5,
+        "peri": 484.9533,
+        "cx": 658.1546,
+        "cy": 709.0901,
+        "length": 155.9078,
+        "width": 90.9343,
+        "aspect": 1.7145,
+        "extent": 0.9491,
+        "circularity": 0.719,
+        "solidity": 0.9785,
+        "hull_extent": 0.9699,
+        "hull_aspect": 1.7145,
+        "hull_circ": 0.7845,
+        "hull_verts_fine": 6,
+        "hull_verts": 5,
+        "max_turn": 93.6079,
+        "edge_conv": 1.1432,
+        "split_min": 0.409,
+        "split_contrast": 42.5765,
+        "defect_depth": 1.9219,
+        "defect_ratio": 0.0211,
+        "angle": -1.6366
+      }
+    },
+    {
+      "label": "yellow_arch",
+      "color": "yellow",
+      "shape": "arch",
+      "size_class": "",
+      "center_px": [
+        954.2,
+        384.4
+      ],
+      "table_xy_mm": null,
+      "angle_img_deg": 67.6,
+      "yaw_deg": null,
+      "notch_dir_deg": 63.0,
+      "size_px": [
+        170.4,
+        89.2
+      ],
+      "size_mm": null,
+      "area_px": 10153,
+      "features": {
+        "area": 10153.5,
+        "peri": 579.9138,
+        "cx": 954.1982,
+        "cy": 384.3757,
+        "length": 170.3583,
+        "width": 89.2042,
+        "aspect": 1.9098,
+        "extent": 0.6681,
+        "circularity": 0.3794,
+        "solidity": 0.7415,
+        "hull_extent": 0.9011,
+        "hull_aspect": 1.9098,
+        "hull_circ": 0.758,
+        "hull_verts_fine": 6,
+        "hull_verts": 6,
+        "max_turn": 94.3236,
+        "edge_conv": 1.1813,
+        "split_min": 0.1379,
+        "split_contrast": 67.5279,
+        "defect_depth": 38.8906,
+        "defect_ratio": 0.436,
+        "angle": 67.6199
+      }
+    },
+    {
+      "label": "green_cube",
+      "color": "green",
+      "shape": "cube",
+      "size_class": "",
+      "center_px": [
+        1087.8,
+        534.1
+      ],
+      "table_xy_mm": null,
+      "angle_img_deg": -22.2,
+      "yaw_deg": null,
+      "notch_dir_deg": null,
+      "size_px": [
+        106.4,
+        88.3
+      ],
+      "size_mm": null,
+      "area_px": 7772,
+      "features": {
+        "area": 7772.0,
+        "peri": 408.6173,
+        "cx": 1087.8492,
+        "cy": 534.1424,
+        "length": 106.3634,
+        "width": 88.2532,
+        "aspect": 1.2052,
+        "extent": 0.828,
+        "circularity": 0.5849,
+        "solidity": 0.9206,
+        "hull_extent": 0.8994,
+        "hull_aspect": 1.2052,
+        "hull_circ": 0.8882,
+        "hull_verts_fine": 7,
+        "hull_verts": 6,
+        "max_turn": 85.8624,
+        "edge_conv": 1.2223,
+        "split_min": 0.307,
+        "split_contrast": 94.7633,
+        "defect_depth": 16.4453,
+        "defect_ratio": 0.1863,
+        "angle": -22.1663
+      }
+    },
+    {
+      "label": "green_cube",
+      "color": "green",
+      "shape": "cube",
+      "size_class": "",
+      "center_px": [
+        665.6,
+        417.2
+      ],
+      "table_xy_mm": null,
+      "angle_img_deg": -62.8,
+      "yaw_deg": null,
+      "notch_dir_deg": null,
+      "size_px": [
+        82.0,
+        80.1
+      ],
+      "size_mm": null,
+      "area_px": 6138,
+      "features": {
+        "area": 6138.0,
+        "peri": 321.5046,
+        "cx": 665.5762,
+        "cy": 417.2037,
+        "length": 82.0432,
+        "width": 80.1121,
+        "aspect": 1.0241,
+        "extent": 0.9339,
+        "circularity": 0.7462,
+        "solidity": 0.9727,
+        "hull_extent": 0.9601,
+        "hull_aspect": 1.0241,
+        "hull_circ": 0.874,
+        "hull_verts_fine": 8,
+        "hull_verts": 4,
+        "max_turn": 92.685,
+        "edge_conv": 1.0427,
+        "split_min": 0.0584,
+        "split_contrast": 107.1805,
+        "defect_depth": 1.7266,
+        "defect_ratio": 0.0216,
+        "angle": -62.7839
+      }
+    },
+    {
+      "label": "green_cube",
+      "color": "green",
+      "shape": "cube",
+      "size_class": "",
+      "center_px": [
+        941.1,
+        591.8
+      ],
+      "table_xy_mm": null,
+      "angle_img_deg": -26.6,
+      "yaw_deg": null,
+      "notch_dir_deg": null,
+      "size_px": [
+        82.3,
+        78.3
+      ],
+      "size_mm": null,
+      "area_px": 5794,
+      "features": {
+        "area": 5794.0,
+        "peri": 316.8772,
+        "cx": 941.1001,
+        "cy": 591.8,
+        "length": 82.2873,
+        "width": 78.2624,
+        "aspect": 1.0514,
+        "extent": 0.8997,
+        "circularity": 0.7251,
+        "solidity": 0.9645,
+        "hull_extent": 0.9328,
+        "hull_aspect": 1.0514,
+        "hull_circ": 0.8653,
+        "hull_verts_fine": 7,
+        "hull_verts": 5,
+        "max_turn": 91.6366,
+        "edge_conv": 1.1037,
+        "split_min": 0.1756,
+        "split_contrast": 77.9356,
+        "defect_depth": 3.0352,
+        "defect_ratio": 0.0388,
+        "angle": -26.5651
+      }
+    }
+  ]
+}
