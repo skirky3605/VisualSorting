@@ -29,11 +29,40 @@ import argparse
 import json
 import math
 import operator
+import os
+import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
 import numpy as np
+
+# Windows 控制台默认不是 UTF-8，中文输出会乱码；能改就改
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except (AttributeError, ValueError):
+    pass
+
+
+def imread_unicode(path: str) -> np.ndarray:
+    """读图：cv2.imread 在 Windows 上读不了中文路径，改用 imdecode。"""
+    buf = np.fromfile(path, dtype=np.uint8)
+    img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+    if img is None:
+        raise SystemExit(f"无法读取图片: {path}")
+    return img
+
+
+def imwrite_unicode(path: str, img: np.ndarray) -> bool:
+    """写图：同样绕开中文路径问题。"""
+    ext = os.path.splitext(path)[1].lower() or ".png"
+    ok, buf = cv2.imencode(ext, img)
+    if not ok:
+        return False
+    buf.tofile(path)
+    return True
 
 # --------------------------------------------------------------------------
 # 颜色定义：Lab 色相角 = atan2(B-128, A-128)，单位度
@@ -41,16 +70,17 @@ import numpy as np
 # 实测三类物体与背景可分性很好，这里留了较宽余量。
 # --------------------------------------------------------------------------
 LAB_HUE_RANGES: dict[str, tuple[float, float]] = {
-    "pink": (-115.0, -8.0),
-    "yellow": (96.0, 124.0),
-    "green": (124.0, 200.0),
+    "red":    (0.0, 55.0),        # 红圆柱 19°（上限留点余量给偏橙的暗面）
+    "yellow": (80.0, 116.0),      # 黄六棱柱 94°（原 96 起会漏掉，必须下移）
+    "green":  (116.0, 160.0),     # 浅绿 129° / 深绿 135°
+    "cyan":   (-180.0, -110.0),   # 青长条 -138°
+    "pink":   (-115.0, -8.0),     # 原有粉色保留（不用可删）
 }
 
 # 标注用色（BGR）：与物体同色系但更亮/更饱和，并配黑色描边保证可读性
 ANNOT_BGR: dict[str, tuple[int, int, int]] = {
-    "pink": (255, 0, 255),
-    "yellow": (0, 220, 255),
-    "green": (0, 255, 0),
+    "pink": (255, 0, 255), "yellow": (0, 220, 255), "green": (0, 255, 0),
+    "red": (0, 0, 255), "cyan": (255, 200, 0),
 }
 
 SHAPE_CN = {
@@ -97,7 +127,7 @@ _CMP = {
 
 @dataclass
 class Config:
-    chroma_min: float = 26.0          # Lab 色度下限，低于此值视为背景
+    chroma_min: float = 18.0          # Lab 色度下限，低于此值视为背景
     l_min: float = 35.0               # 亮度下限，滤掉阴影
     chroma_loose: float = 13.0        # 迟滞阈值：暗面/高光用更宽的下限回收
     l_min_loose: float = 20.0
@@ -140,6 +170,8 @@ class Detection:
     contour: np.ndarray = field(repr=False, default=None)
     yaw_deg: float | None = None       # 标定后：工作台坐标系下的偏航角
     table_xy_mm: tuple[float, float] | None = None
+    rel_xy_mm: tuple[float, float] | None = None   # 相对参考点(origin)的 x,y
+    dist_mm: float | None = None                   # 到参考点的距离
     size_mm: tuple[float, float] | None = None
     notch_dir_deg: float | None = None  # 拱桥缺口朝向（图像坐标系）
     size_class: str = ""
@@ -161,6 +193,10 @@ class Detection:
             "table_xy_mm": None
             if self.table_xy_mm is None
             else [round(v, 1) for v in self.table_xy_mm],
+            "rel_xy_mm": None
+            if self.rel_xy_mm is None
+            else [round(v, 1) for v in self.rel_xy_mm],
+            "dist_mm": None if self.dist_mm is None else round(self.dist_mm, 1),
             "angle_img_deg": round(self.angle_deg, 1),
             "yaw_deg": None if self.yaw_deg is None else round(self.yaw_deg, 1),
             "notch_dir_deg": None
@@ -560,6 +596,8 @@ def load_calibration(path: str) -> dict:
 
 def apply_calibration(dets: list[Detection], calib: dict) -> None:
     h_mat = calib["H"]
+    # 参考点（工作台毫米）：识别结果会输出"相对该点的 x,y"和距离
+    origin = calib.get("origin_mm") or [0.0, 0.0]
 
     def to_table(pts: np.ndarray) -> np.ndarray:
         pts = np.asarray(pts, dtype=np.float64).reshape(-1, 1, 2)
@@ -569,6 +607,8 @@ def apply_calibration(dets: list[Detection], calib: dict) -> None:
         # 位置
         (mx, my) = to_table([[det.cx, det.cy]])[0]
         det.table_xy_mm = (float(mx), float(my))
+        det.rel_xy_mm = (float(mx) - float(origin[0]), float(my) - float(origin[1]))
+        det.dist_mm = float(math.hypot(*det.rel_xy_mm))
         # 姿态：把长轴两端点投到工作台坐标系，重算角度
         rad = math.radians(det.angle_deg)
         half = det.length_px / 2.0
@@ -595,11 +635,37 @@ def apply_calibration(dets: list[Detection], calib: dict) -> None:
         )
 
 
+def calib_origin_px(calib: dict) -> tuple[float, float] | None:
+    """参考点在图像中的像素位置（用于在标注图上画出来）。"""
+    origin = calib.get("origin_mm")
+    if origin is None:
+        return None
+    h_table2img = np.linalg.inv(calib["H"])
+    px = cv2.perspectiveTransform(
+        np.asarray([[origin]], dtype=np.float64), h_table2img
+    ).reshape(-1, 2)[0]
+    return float(px[0]), float(px[1])
+
+
 # --------------------------------------------------------------------------
 # 可视化
 # --------------------------------------------------------------------------
-def annotate(bgr: np.ndarray, dets: list[Detection], cfg: Config) -> np.ndarray:
+def annotate(
+    bgr: np.ndarray,
+    dets: list[Detection],
+    cfg: Config,
+    origin_px: tuple[float, float] | None = None,
+) -> np.ndarray:
     img = bgr.copy()
+    if origin_px is not None:
+        ox, oy = int(origin_px[0]), int(origin_px[1])
+        # 参考点：十字 + 圈，肉眼就能确认标定基准在哪
+        cv2.drawMarker(img, (ox, oy), (0, 0, 255), cv2.MARKER_CROSS, 26, 3)
+        cv2.circle(img, (ox, oy), 12, (0, 0, 255), 2, cv2.LINE_AA)
+        cv2.putText(img, "O(0,0)", (ox + 14, oy - 12), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7, (0, 0, 0), 4, cv2.LINE_AA)
+        cv2.putText(img, "O(0,0)", (ox + 14, oy - 12), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7, (0, 0, 255), 2, cv2.LINE_AA)
     for det in dets:
         color = ANNOT_BGR.get(det.color, (255, 255, 255))
         box = det.box_poly.astype(np.int32)
@@ -661,6 +727,18 @@ def annotate(bgr: np.ndarray, dets: list[Detection], cfg: Config) -> np.ndarray:
             2,
             cv2.LINE_AA,
         )
+        if origin_px is not None:
+            # 从参考点指向物体的连线：相对位置一眼可见
+            for thickness, col in ((4, (0, 0, 0)), (1, (255, 0, 0))):
+                cv2.arrowedLine(
+                    img,
+                    (int(origin_px[0]), int(origin_px[1])),
+                    (int(det.cx), int(det.cy)),
+                    col,
+                    thickness,
+                    cv2.LINE_AA,
+                    tipLength=0.02,
+                )
     return img
 
 
@@ -668,6 +746,21 @@ def print_table(dets: list[Detection]) -> None:
     if not dets:
         print("  未检测到任何物体")
         return
+    if any(d.rel_xy_mm is not None for d in dets):
+        head = (
+            f"  {'#':>2}  {'label':<22}{'x,y 相对参考点(mm)':>24}"
+            f"{'距离mm':>9}{'偏航角':>9}"
+        )
+        print(head)
+        for i, d in enumerate(dets, 1):
+            rel = d.rel_xy_mm or (0.0, 0.0)
+            yaw = "—" if d.yaw_deg is None else f"{d.yaw_deg:.1f}°"
+            dist = "—" if d.dist_mm is None else f"{d.dist_mm:.1f}"
+            print(
+                f"  {i:>2}  {d.label:<22}{f'{rel[0]:+.1f}, {rel[1]:+.1f}':>24}"
+                f"{dist:>9}{yaw:>9}"
+            )
+        print()
     head = (
         f"  {'#':>2}  {'label':<22}{'center_px':>16}  {'angle':>7}  "
         f"{'size_px':>14}  {'hAsp':>6}  {'hExt':>6}  {'fill':>6}  "
@@ -686,9 +779,7 @@ def print_table(dets: list[Detection]) -> None:
 
 # --------------------------------------------------------------------------
 def process(path: str, cfg: Config, calib: dict | None = None) -> tuple[np.ndarray, list[Detection]]:
-    bgr = cv2.imread(path, cv2.IMREAD_COLOR)
-    if bgr is None:
-        raise SystemExit(f"无法读取图片: {path}")
+    bgr = imread_unicode(path)
     if cfg.max_width and bgr.shape[1] > cfg.max_width:
         scale = cfg.max_width / bgr.shape[1]
         bgr = cv2.resize(
@@ -700,51 +791,176 @@ def process(path: str, cfg: Config, calib: dict | None = None) -> tuple[np.ndarr
     return bgr, dets
 
 
-def run_stream(
-    url: str, cfg: Config, calib: dict | None, args: argparse.Namespace
-) -> None:
-    """实时模式：从 MJPEG 视频流（ESP32-S3 /stream）逐帧识别。
+def parse_size(text: str) -> tuple[int, int]:
+    parts = text.lower().replace("*", "x").split("x")
+    if len(parts) != 2:
+        raise SystemExit("尺寸格式应为 宽x高，例如 1280x720")
+    return int(parts[0]), int(parts[1])
 
-    这是分拣系统的实际工作形态：ESP32 只负责出图，识别与姿态解算在 PC 端。
+
+def list_cameras(max_index: int = 6) -> list[tuple[int, int, int, float]]:
+    """扫描可用的 USB 摄像头，返回 [(序号, 宽, 高, 平均亮度)]。
+
+    平均亮度接近 0 的通常是"影子设备"（虚拟摄像头、被隐私快门挡住的镜头），
+    顺手报出来可以省去一个个试的麻烦。
     """
-    cap = cv2.VideoCapture(url)
+    found: list[tuple[int, int, int, float]] = []
+    for idx in range(max_index):
+        cap = (
+            cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+            if os.name == "nt"
+            else cv2.VideoCapture(idx)
+        )
+        if cap.isOpened():
+            frame = None
+            for _ in range(5):        # 多读几帧，等曝光稳定
+                ok, f = cap.read()
+                if ok and f is not None:
+                    frame = f
+            if frame is not None:
+                found.append((idx, frame.shape[1], frame.shape[0], float(frame.mean())))
+        cap.release()
+    return found
+
+
+def _open_camera(
+    index: int, size: tuple[int, int] | None
+) -> cv2.VideoCapture:
+    """打开 USB 摄像头，可选请求 MJPG + 分辨率。"""
+    cap = None
+    if os.name == "nt":
+        # Windows 上用 DirectShow 打开更快，也更支持改分辨率/编码格式
+        cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            cap.release()
+            cap = None
+    if cap is None:
+        cap = cv2.VideoCapture(index)
     if not cap.isOpened():
-        raise SystemExit(f"无法打开视频流: {url}")
-    print(f"已连接视频流: {url}   (Ctrl+C 退出)")
+        return cap
+    if size:
+        w, h = size
+        # 先 MJPG 再设分辨率：USB2 上不压缩的 1080p 会掉帧
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)   # 不支持的后端会忽略
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
+    return cap
+
+
+def open_source(
+    source, size: tuple[int, int] | None = None, warmup: int = 10
+) -> cv2.VideoCapture:
+    """打开视频源：int = USB 摄像头序号，str = 网络流地址（MJPEG/RTSP）。
+
+    摄像头有些驱动在改分辨率后会直接停止出帧，所以这里会先试读一帧；
+    读不到就退回默认设置重开，避免"设了参数反而打不开"。
+    """
+    if isinstance(source, int):
+        cap = _open_camera(source, size)
+        if not cap.isOpened():
+            raise SystemExit(
+                f"打不开摄像头 #{source}。可能原因：该序号是虚拟设备、"
+                f"被其它程序占用（相机 App / 浏览器 / 上次未正常退出的进程），"
+                f"或需要拔插一次。先用 --list-cameras 看哪些序号有画面。"
+            )
+        if size:
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                cap.release()
+                print("  提示: 按请求的分辨率拿不到画面，退回默认分辨率重开")
+                cap = _open_camera(source, None)
+                if not cap.isOpened():
+                    raise SystemExit(f"摄像头 #{source} 无法打开")
+        for _ in range(max(0, warmup)):
+            cap.read()
+        return cap
+
+    cap = cv2.VideoCapture(source)
+    if not cap.isOpened():
+        raise SystemExit(f"无法打开视频源: {source}")
+    for _ in range(max(0, warmup)):
+        cap.read()
+    return cap
+
+
+def run_capture(
+    source, cfg: Config, calib: dict | None, args: argparse.Namespace
+) -> None:
+    """实时模式：USB 摄像头或网络流，逐帧识别。
+
+    这是分拣系统的实际工作形态：相机只负责出图，识别与姿态解算在 PC 端。
+    """
+    size = parse_size(args.camera_size) if args.camera_size else None
+    cap = open_source(source, size, args.warmup)
+    kind = f"USB 摄像头 #{source}" if isinstance(source, int) else f"视频流 {source}"
+    print(f"已连接 {kind}   (Ctrl+C 退出)")
+    if isinstance(source, int):
+        print(
+            f"  实际分辨率: {int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x"
+            f"{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}"
+        )
     frame_id = 0
     last_vis = None
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            print("读取失败，重试…")
-            continue
-        frame_id += 1
-        if cfg.max_width and frame.shape[1] > cfg.max_width:
-            scale = cfg.max_width / frame.shape[1]
-            frame = cv2.resize(frame, None, fx=scale, fy=scale,
-                               interpolation=cv2.INTER_AREA)
-        dets = detect(frame, cfg)
-        if calib:
-            apply_calibration(dets, calib)
-        last_vis = annotate(frame, dets, cfg)
-        if args.frames == 0 or frame_id % 10 == 1:
-            summary = ", ".join(
-                f"{d.label}({d.angle_deg:.0f}°)" for d in dets
+    t_mark = time.perf_counter()
+    n_mark = 0
+    fails = 0
+    try:
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                fails += 1
+                if fails >= 30:
+                    print(
+                        "连续 30 次读不到画面，已停止。"
+                        "排查：摄像头是否被其它程序占用、序号是否选错。"
+                    )
+                    break
+                time.sleep(0.05)
+                continue
+            fails = 0
+            frame_id += 1
+            if frame_id == 1 and args.save_frame:
+                # 存一张原始帧：用于标定、以及用 palette_probe 复标颜色阈值
+                imwrite_unicode(args.save_frame, frame)
+                print(f"  原始帧已保存: {args.save_frame}")
+            if cfg.max_width and frame.shape[1] > cfg.max_width:
+                scale = cfg.max_width / frame.shape[1]
+                frame = cv2.resize(frame, None, fx=scale, fy=scale,
+                                   interpolation=cv2.INTER_AREA)
+            dets = detect(frame, cfg)
+            if calib:
+                apply_calibration(dets, calib)
+            last_vis = annotate(
+                frame, dets, cfg, calib_origin_px(calib) if calib else None
             )
-            print(f"  #{frame_id:5d} {len(dets)} 个: {summary}")
-        if args.snapshot and (args.frames == 0 or frame_id % 30 == 0):
-            cv2.imwrite(args.snapshot, last_vis)
-        if args.frames and frame_id >= args.frames:
-            break
-    cap.release()
-    if args.snapshot and last_vis is not None:
-        cv2.imwrite(args.snapshot, last_vis)
-        print(f"最后一帧已保存: {args.snapshot}")
+            if args.frames == 0 or frame_id % 10 == 1:
+                summary = ", ".join(
+                    f"{d.label}({d.angle_deg:.0f}°)" for d in dets
+                )
+                now = time.perf_counter()
+                fps = (frame_id - n_mark) / max(now - t_mark, 1e-6)
+                t_mark, n_mark = now, frame_id
+                print(
+                    f"  #{frame_id:5d} {len(dets)} 个 [{fps:4.1f} fps]: {summary}"
+                )
+            if args.snapshot and (args.frames == 0 or frame_id % 30 == 0):
+                imwrite_unicode(args.snapshot, last_vis)
+            if args.frames and frame_id >= args.frames:
+                break
+    except KeyboardInterrupt:
+        print("\n  已中断")
+    finally:
+        # 必须释放，否则进程异常退出会让摄像头一直处于"被占用"状态
+        cap.release()
+        if args.snapshot and last_vis is not None:
+            imwrite_unicode(args.snapshot, last_vis)
+            print(f"最后一帧已保存: {args.snapshot}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="分拣视觉：颜色+形状+姿态")
-    parser.add_argument("images", nargs="+", help="输入图片")
+    parser.add_argument("images", nargs="*", help="输入图片（也可用 --camera / --url）")
     parser.add_argument("--out", help="标注结果输出路径（仅单张输入时可用）")
     parser.add_argument("--json", help="检测结果 JSON 输出路径")
     parser.add_argument("--calib", help="标定文件（calibrate.py 生成）")
@@ -760,13 +976,47 @@ def main() -> None:
     )
     parser.add_argument(
         "--url",
-        help="视频流地址（如 ESP32-S3 的 http://192.168.4.1:81/stream），"
+        help="视频流地址（ESP32-S3 默认 http://192.168.4.1/stream，"
+        "本工程固件用 HTTPD 默认端口 80），"
         "给定后忽略图片参数，进入实时识别",
     )
     parser.add_argument("--frames", type=int, default=0, help="流模式下处理帧数，0=一直跑")
     parser.add_argument("--snapshot", help="流模式：把最后一帧标注结果存到这里")
+    parser.add_argument(
+        "--camera",
+        type=int,
+        help="USB 摄像头序号（0 = 第一个），临时调试用，配合 --camera-size",
+    )
+    parser.add_argument(
+        "--camera-size",
+        default="1280x720",
+        help="USB 摄像头请求的分辨率，默认 1280x720（用 MJPG 模式设置）",
+    )
+    parser.add_argument(
+        "--warmup", type=int, default=10,
+        help="打开摄像头后先丢弃多少帧（等自动曝光/白平衡稳定），默认 10",
+    )
+    parser.add_argument(
+        "--list-cameras", action="store_true",
+        help="列出可用的 USB 摄像头序号后退出",
+    )
+    parser.add_argument(
+        "--save-frame",
+        help="实时模式下把第一帧原图存到该路径（用于标定和颜色复标）",
+    )
     parser.add_argument("--debug", action="store_true", help="输出额外调试信息")
     args = parser.parse_args()
+
+    if args.list_cameras:
+        cams = list_cameras()
+        if cams:
+            for idx, w, h, mean in cams:
+                flag = "  ← 疑似黑屏/虚拟设备" if mean < 5 else ""
+                print(f"  摄像头 #{idx}: {w}x{h} 平均亮度 {mean:5.1f}{flag}")
+            print("用法: --camera <序号>（挑有画面的那个）")
+        else:
+            print("没有扫描到可用的 USB 摄像头")
+        return
 
     cfg = Config()
     if args.chroma_min is not None:
@@ -783,9 +1033,16 @@ def main() -> None:
         ]
     calib = load_calibration(args.calib) if args.calib else None
 
-    if args.url:
-        run_stream(args.url, cfg, calib, args)
+    if args.camera is not None:
+        run_capture(args.camera, cfg, calib, args)
         return
+
+    if args.url:
+        run_capture(args.url, cfg, calib, args)
+        return
+
+    if not args.images:
+        parser.error("请给出图片路径，或用 --camera <序号> / --url <地址>")
 
     all_results = {}
     for path in args.images:
@@ -800,7 +1057,10 @@ def main() -> None:
                 )
         all_results[path] = [d.to_dict() for d in dets]
         if args.out and len(args.images) == 1:
-            cv2.imwrite(args.out, annotate(bgr, dets, cfg))
+            imwrite_unicode(
+                args.out,
+                annotate(bgr, dets, cfg, calib_origin_px(calib) if calib else None),
+            )
             print(f"  标注结果已保存: {args.out}")
     if args.json:
         Path(args.json).write_text(

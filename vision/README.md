@@ -50,7 +50,7 @@ $py = "C:\Users\skirky\miniconda3\envs\py310\python.exe"
 & $py vision\sorter_vision.py test1.jpg --calib calib.json --roi-poly "300,300;900,250;1050,800;350,800"
 
 # 接 ESP32-S3 视频流实时识别（跑 300 帧并存一张标注快照）
-& $py vision\sorter_vision.py --url http://192.168.4.1:81/stream --frames 300 --snapshot out\snap.jpg
+& $py vision\sorter_vision.py --url http://192.168.4.1/stream --frames 300 --snapshot out\snap.jpg
 
 # 四个候选机位定量比较
 & $py vision\evaluate_views.py test1.jpg test2.jpg test3.jpg test4.jpg `
@@ -153,6 +153,30 @@ $py = "C:\Users\skirky\miniconda3\envs\py310\python.exe"
 
 ## 6. 如何添加新形状 / 新颜色
 
+### 6.0 换物料后：一条命令生成颜色配置（推荐先做这个）
+
+```powershell
+& $py vision\sorter_vision.py --camera 0 --save-frame out\frame.jpg   # 拍一张有物料的图
+& $py vision\palette_probe.py out\frame.jpg --suggest                 # 直接给可粘贴的配置块
+```
+
+输出形如（实测自 1280x720 的白色背景 + 黄/绿/青/红四件物料）：
+
+```
+  ▶ 背景色度上界(99.5%) = 10.2
+  ▶ 建议 chroma_min = 16（严格）/ 12（宽松）
+LAB_HUE_RANGES: dict[str, tuple[float, float]] = {
+    "green": (118.7, 151.4),
+    "red": (0.8, 39.9),
+    "yellow": (79.9, 106.1),
+    "cyan": (-175.3, -123.9),
+}
+```
+
+把这一段覆盖 `sorter_vision.py` 里的 `LAB_HUE_RANGES`，再按提示改 `Config` 里的
+`chroma_min / chroma_loose`（脚本已经保证宽松阈值高于背景色度上界，不会把背景阴影收进来）。
+**颜色名可以自己起**，但两两不能重叠；新名字记得在 `ANNOT_BGR` 里补一个标注颜色。
+
 形状判别已做成**数据驱动的规则表** `SHAPE_RULES`（在 `sorter_vision.py` 顶部），
 新增形状 = 加一行，不用改判别逻辑。
 
@@ -162,6 +186,11 @@ $py = "C:\Users\skirky\miniconda3\envs\py310\python.exe"
    每行末尾会显示「当前命中了哪条规则」，同时给出全部候选判别量：
    `hExt` 凸包填充率 / `hAsp` 长短轴比 / `hCirc` 凸包圆度 / `turn` 边界最大转角 /
    `d/min` 缺口深度比 / `splMin` 明暗双峰占比 / `A/hull` 轮廓与凸包面积比。
+
+   > 先确认颜色没配错：如果某件物料根本没出现在表里，是色相/色度没覆盖它（回到 6.0），
+   > 不是形状问题。另一个常见假象是 `A/hull`（轮廓/凸包面积比）掉到 0.9 以下 ——
+   > 那是掩膜被高光或阴影啃掉一块，会连带把 `hExt` 压低、把形状判错。
+   > **先解决色彩和光照，再调形状阈值。**
 3. **找分界**：把新形状这些量的取值范围，和现有 5 类（以及 test1~4 上的实际分布）
    对比，找一条**不重叠**的分界；同时留出余量（别贴着现有物料的边界取阈值）。
 4. **加规则**：在 `SHAPE_RULES` 里、**兜底那条 `("cube", [])` 之前**插入。
@@ -181,6 +210,12 @@ $py = "C:\Users\skirky\miniconda3\envs\py310\python.exe"
 
 **如果现有特征分不开**，按代价从低到高：
 
+> 实测例子：**六棱柱立放** 与 **圆柱** 分不开。六棱柱（俯视为六边形）实测
+> `hExt 0.839 / hAsp 1.11 / hCirc 0.945 / turn 59.9 / vf 8`，正好落进圆柱判据
+> `hCirc ≥ 0.90 且 turn ≤ 62`。两者要靠"顶面是六条直边还是圆弧"来分，
+> 也就是**先把顶面从剪影里分离出来**（详见下一张表的第 2 条），或加一个
+> "凸包折线拟合残差"特征。这类问题属于要动特征而不是动阈值。
+
 | 手段 | 做法 | 适用情形 |
 |---|---|---|
 | 加一个几何特征 | 在 `measure()` 里算出来并加进返回字典即可（自动进入规则表与 JSON 输出） | 形状在轮廓上确有差别，只是现有量没测到（可加「平行边对数」「角点数」等） |
@@ -191,7 +226,86 @@ $py = "C:\Users\skirky\miniconda3\envs\py310\python.exe"
 再在 `ANNOT_BGR` 加标注颜色。色相角范围可以先拍一张，用
 `palette_probe.py --min-chroma 22` 看主色落在哪一段。
 
-## 7. 已知限制 / 下一步
+## 7. USB 摄像头临时调试与标定
+
+### 7.1 接入 USB 摄像头
+
+```powershell
+& $py vision\sorter_vision.py --list-cameras      # 扫出可用序号（列出 序号: 宽x高）
+& $py vision\sorter_vision.py --camera 0 --save-frame out\frame.jpg
+& $py vision\sorter_vision.py --camera 0 --camera-size 1280x720 --frames 200 --snapshot out\snap.jpg
+```
+
+* Windows 下用 DirectShow 打开，并先请求 **MJPG** 再设分辨率——USB2 上不压缩的 1080p 会掉帧。
+* 打开后会先丢弃 `--warmup`（默认 10）帧，等自动曝光/白平衡稳定。
+* 画面全黑/花屏：镜头被挡或有隐私快门，换一个序号再试（`--list-cameras` 能看到几个）。
+* `--save-frame` 存的是**未标注的原图**，专门给标定和颜色复标用。
+
+### 7.2 换相机后先复核颜色阈值
+
+新传感器的色彩响应和白平衡都不一样，接上后先跑一次直方图：
+
+```powershell
+& $py vision\palette_probe.py out\frame.jpg --hist --k 4
+```
+
+看两点：① 色度直方图里背景挤在低色度区、物料在高色度区，**中间那条空缝就是 `chroma_min`**（脚本会直接给建议值）；② 三类物料的色相角落点是否还在 `LAB_HUE_RANGES` 范围内，偏了就改那三行。
+
+### 7.3 标定：拿到"取样点"（4 个角点像素）
+
+标定的本质是给一个 **已知实际尺寸的矩形**，量出它 4 个角在图像里的像素坐标。三种取点方式：
+
+**方式 A：鼠标点选（推荐）**
+
+```powershell
+# 直接对着 USB 摄像头点选
+& $py vision\calibrate.py --interactive --camera 0 --size-mm "520,430" `
+      --out calib.json --check-out out\calib_check.png
+# 或者对着之前存下来的帧图点选（更稳，可反复点）
+& $py vision\calibrate.py --interactive --image out\frame.jpg --size-mm "520,430" --out calib.json
+```
+
+操作：**空格冻结画面** → 按提示顺序点 4 个角 → 回车确认（R 重来，ESC 退出）。点满 4 个会自动把网格投到画面上，觉得不对劲就 R 重来。
+
+**方式 B：坐标网格图手抄**（不方便用鼠标时）
+
+```powershell
+& $py vision\calibrate.py --grid-image out\frame.jpg --grid-out out\coord_grid.png
+# 在图上读出 4 个角点像素，再用非交互方式生成标定
+& $py vision\calibrate.py --points "812,236;1180,470;1015,905;600,720" --size-mm "520,430" `
+      --out calib.json --check out\frame.jpg --check-out out\calib_check.png
+```
+
+**方式 C：直接量取**：把标定板放到工位最常用位置，用图像编辑器读像素坐标即可，同样走 `--points`。
+
+**角点顺序必须与工作台坐标一一对应**：
+
+| 顺序 | 工作台坐标 | 说明 |
+|---|---|---|
+| 1 | (0,0) | 原点 |
+| 2 | (W,0) | +X 方向 |
+| 3 | (W,H) | 对角 |
+| 4 | (0,H) | +Y 方向 |
+
+标定完成后 `sorter_vision.py --calib calib.json` 才会输出 `yaw_deg` 和 `table_xy_mm`。
+
+### 7.4 标定完必须做的自检
+
+1. **看命令行里的"四边像素/毫米"**：四个数应彼此接近，差得多说明角点顺序错了或实际尺寸填错。
+2. **看自检图 `calib_check.png`**：蓝色网格必须投影成**正方形**（透视梯形是对的，格子变形是不对的）。
+3. **拿已知物体验证**：放一件量过尺寸的物料，看输出 `size_mm` 和卡尺差多少，正常应在 1–2mm 内。
+4. **重复点两次**：两次的 `yaw_deg` 差应在 1–2° 内，差大了就是点选随机性太大，改用更清晰、更大的标定板。
+
+### 7.5 标定的坑
+
+* **别用撕下来的纸板四角**当基准——它本身不是标准矩形，单应假设会直接失效。打印/裁一块刚性矩形标定板（黑白打印纸贴在硬纸板上也行）。
+* **角点要摊开**：标定矩形应尽量占满视野的 1/2 以上，细长四边形会把误差放大到整个工作区。
+* **相机固定后再标**：调过焦距、对焦环、支架角度都要重标。
+* **同一平面**：标定板和物料必须在同一个台面高度上，否则会有高度视差。
+* **镜头畸变大**（广角/鱼眼）时应先做一次内参去畸变，再算单应——当前代码只做单应，不做去畸变。
+* **中文路径**：脚本内部已用 `imdecode/imencode` 兼容中文路径，但 PowerShell 把中文路径当参数传给 `python.exe` 仍会乱码——在项目根目录用相对路径最稳。
+
+## 8. 已知限制 / 下一步
 
 1. **粘连**：同色物料在图像中相连时会合并成一个连通域。下一步加距离变换 + 分水岭，
    或按抓取位分格上料（每次只放一件）。

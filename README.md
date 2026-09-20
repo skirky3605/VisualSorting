@@ -35,7 +35,7 @@ $py = "C:\Users\skirky\miniconda3\envs\py310\python.exe"
       --size-mm "520,430" --out calib.json --check test1.jpg --check-out out\grid.png
 
 # 4) 接 ESP32-S3 视频流实时识别
-& $py vision\sorter_vision.py --url http://192.168.4.1:81/stream --frames 300 --snapshot out\snap.png
+& $py vision\sorter_vision.py --url http://192.168.4.1/stream --frames 300 --snapshot out\snap.png
 ```
 
 > 在项目根目录用相对路径运行；PowerShell 把中文路径当参数传给 python.exe 会乱码。
